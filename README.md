@@ -71,7 +71,8 @@ The image `ghcr.io/vojtechzicha/czu-stream-recorder` is built for `linux/amd64` 
    `NOTES_DIR` to an outbox (e.g. `/volume1/docker/czu-stream-recorder/outbox`) and add a Task Scheduler job
    (user-defined script, run as the same user, every 5 minutes) that delivers the files from the host:
    `/bin/bash /volume1/docker/czu-stream-recorder/synology-outbox.sh <outbox> "<Cloud Sync folder>"`
-   (the script is [`contrib/synology-outbox.sh`](contrib/synology-outbox.sh)).
+   (the script is [`contrib/synology-outbox.sh`](contrib/synology-outbox.sh)), and give the user **Traverse folders/Execute files** (this folder only)
+   on each folder above the Cloud Sync folder: the script runs on the host, where it has to walk the full path.
 
 At startup, the recorder logs an error (and keeps running) for any mounted folder it can't write. Segment parts
 stay in `work/` while recording, so a Plex library never sees half-finished files.

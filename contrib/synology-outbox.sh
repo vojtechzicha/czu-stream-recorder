@@ -8,6 +8,8 @@
 #
 #   /bin/bash /volume1/docker/czu-stream-recorder/synology-outbox.sh OUTBOX DESTINATION
 #
+# The user needs Read & Write on DESTINATION and only "Traverse folders" (this folder only) on each folder above it.
+#
 # The audio is copied first, under a temporary name, and the .log last, because the transcriber treats the .log as
 # "recording complete". The outbox keeps the same subfolders as the destination.
 set -u
@@ -18,8 +20,9 @@ status=0
 while IFS= read -r -d '' log; do
   base="${log%.log}"
   [ -f "$base.m4a" ] || continue            # the recorder writes the .log after the .m4a
-  dir="$DST/$(dirname "$log")"
-  mkdir -p "$dir" || { status=1; continue; }
+  # create subfolders relative to DST: on a Synology, mkdir -p on an absolute path fails with
+  # "Permission denied" on parent folders the user may only traverse, even though they exist
+  ( cd "$DST" && mkdir -p -- "$(dirname "$log")" ) || { status=1; continue; }
   if cp "$base.m4a" "$DST/$base.m4a.copying" && mv -f "$DST/$base.m4a.copying" "$DST/$base.m4a" \
      && cp "$log" "$DST/$log"; then
     rm -f "$base.m4a" "$log"
