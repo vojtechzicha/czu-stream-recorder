@@ -209,6 +209,20 @@ def finished_recordings(root: Path) -> list[Path]:
     return out
 
 
+def fully_synced(m4a: Path, settle: float = 5.0) -> bool:
+    """The file arrives through a cloud sync client: wait until its size has stopped changing and
+    ffprobe can read the whole container (an MP4/M4A whose download is unfinished has no usable index)."""
+    try:
+        a = m4a.stat().st_size
+        time.sleep(settle)
+        if m4a.stat().st_size != a or a == 0:
+            return False
+        duration(m4a)
+        return True
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return False
+
+
 def notify(title: str, text: str) -> None:
     if sys.platform == "darwin":
         script = f'display notification {json.dumps(text)} with title {json.dumps(title)}'
@@ -233,6 +247,9 @@ def cmd_scan(args) -> int:
             return 0
         bad = 0
         for m4a in todo:
+            if not fully_synced(m4a):
+                log(f"not fully synced yet, next run: {m4a.name}")
+                continue
             try:
                 txt = transcribe_file(m4a, args.model, None)
                 notify("Přepis hotový", f"{m4a.parent.name}: {txt.stem}")
