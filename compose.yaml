@@ -1,0 +1,23 @@
+name: czu-stream-recorder
+
+services:
+  recorder:
+    image: ghcr.io/vojtechzicha/czu-stream-recorder:latest
+    # build: .            # or build the image yourself instead of pulling it
+    container_name: czu-stream-recorder
+    restart: unless-stopped
+    # Owner of the recordings on the host (Synology: the DSM user's uid, group "users" = 100). Set them in .env.
+    user: "${PUID:-1000}:${PGID:-100}"
+    environment:
+      TZ: ${TZ:-Europe/Prague}
+    volumes:
+      - ./config:/config:ro
+      - ${RECORDINGS_DIR:-./recordings}:/recordings
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+    healthcheck:
+      # the schedule must parse; stream problems are logged by the daemon itself
+      test: ["CMD", "python", "-m", "recorder", "list", "--config", "/config/schedule.toml"]
+      interval: 10m
+      timeout: 30s

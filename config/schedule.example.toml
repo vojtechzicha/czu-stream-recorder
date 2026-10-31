@@ -1,0 +1,28 @@
+# Copy this file to config/schedule.toml and list the sessions to record.
+# Times are local (the container's TZ, Europe/Prague by default).
+# The recorder re-reads the file every 20 s, so edits apply without a restart.
+# Each recording runs from (start - lead_minutes) to (end + tail_minutes).
+
+[defaults]
+stream = "kongresovy-sal"
+lead_minutes = 10       # start before the scheduled time
+tail_minutes = 20       # sessions overrun
+# max_height = 720      # cap the quality; default is the best variant (1080p ≈ 1.5 GB/h)
+normalize_audio = true  # level the (often quiet) room audio in the MP4 and the M4A
+
+[streams]
+# name = HLS master playlist (open the stream page and take the <source src="…m3u8">)
+# https://video.czu.cz/live/kongresovy-sal/
+kongresovy-sal = "https://wcavp-wowza.czu.cz:4443/live-kongresovy-sal/smil:live-kongresovy-sal.smil/playlist.m3u8"
+
+[[recording]]
+title = "Přednáška"     # becomes "2026-11-21 Přednáška.mp4"
+start = 2026-11-21T08:45:00
+end   = 2026-11-21T15:30:00
+
+# [[recording]]
+# title = "Another session"
+# stream = "https://…/playlist.m3u8"   # a full URL works too
+# start = 2026-12-12T08:45:00
+# end   = 2026-12-12T12:00:00
+# max_height = 720

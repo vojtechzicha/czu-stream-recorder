@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+recordings/
+# your own schedule (copy it from schedule.example.toml)
+config/schedule.toml
