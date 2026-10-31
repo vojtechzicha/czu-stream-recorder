@@ -50,6 +50,7 @@ docker compose logs -f
 | `NOTES_DIR` | `./notes` | Where each recording's `.m4a` and `.log` go |
 | `PUID` / `PGID` | `1000` / `100` | The user the recorder runs as. Use a dedicated unprivileged user that can write only the mounted folders |
 | `TZ` | `Europe/Prague` | Time zone used to read the schedule |
+| `IMAGE_TAG` | `latest` | Image version. Pin a build (`sha-xxxxxxx` from the packages page) so updates only happen when you change it |
 
 The image `ghcr.io/vojtechzicha/czu-stream-recorder` is built for `linux/amd64` and `linux/arm64`.
 

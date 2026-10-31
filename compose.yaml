@@ -2,7 +2,7 @@ name: czu-stream-recorder
 
 services:
   recorder:
-    image: ghcr.io/vojtechzicha/czu-stream-recorder:latest
+    image: ghcr.io/vojtechzicha/czu-stream-recorder:${IMAGE_TAG:-latest}   # pin e.g. IMAGE_TAG=sha-f2389ac in .env
     # build: .            # or build the image yourself instead of pulling it
     container_name: czu-stream-recorder
     restart: unless-stopped
