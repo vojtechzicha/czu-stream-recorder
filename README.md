@@ -48,17 +48,25 @@ docker compose logs -f
 |---|---|---|
 | `RECORDINGS_DIR` | `./recordings` | Where the MP4 files go (e.g. a Plex library such as `/volume1/Media/Courses`) |
 | `NOTES_DIR` | `./notes` | Where each recording's `.m4a` and `.log` go |
-| `PUID` / `PGID` | `1000` / `100` | Owner of the files (`id <user>` on the host; Synology DSM users start at 1026, group `users` = 100) |
+| `PUID` / `PGID` | `1000` / `100` | The user the recorder runs as. Use a dedicated unprivileged user that can write only the mounted folders |
 | `TZ` | `Europe/Prague` | Time zone used to read the schedule |
 
 The image `ghcr.io/vojtechzicha/czu-stream-recorder` is built for `linux/amd64` and `linux/arm64`.
 
 ### Synology DSM
 
-Install **Container Manager**. Put `compose.yaml`, `.env` and `config/schedule.toml` in
-`/volume1/docker/czu-stream-recorder`, together with empty `work/` and `notes/` folders. Then create a project from
-that folder in Container Manager, or run `sudo docker compose up -d` there over SSH. Every mounted folder must be
-writable by `PUID`. Segment parts stay in `work/` while recording, so a Plex library never sees half-finished files.
+1. Create a DSM user for the container, e.g. `czu-recorder`: Control Panel → User & Group → Create. Give it a
+   random password, leave every shared folder **unset** (not "No access": a deny entry overrides any allow), deny
+   all applications, and keep it out of the administrators group. Its UID is `PUID`, and `PGID` is `100` (`users`).
+2. In File Station → Properties → Permission, give that user **Read & Write** (this folder, child folders, files)
+   on just the folders the container mounts: the recordings folder, the notes folder and the project folder.
+   Mount those folders directly (`RECORDINGS_DIR=/volume1/Media/Courses/Lectures`, not the share root). That way
+   the container never traverses the parent shares and needs no permissions on them.
+3. Install **Container Manager**. Put `compose.yaml`, `.env` and `config/schedule.toml` in
+   `/volume1/docker/czu-stream-recorder`, add an empty `work/` folder, and create a project from that folder.
+
+At startup, the recorder logs an error (and keeps running) for any mounted folder it can't write. Segment parts
+stay in `work/` while recording, so a Plex library never sees half-finished files.
 
 ## Schedule
 

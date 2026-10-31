@@ -6,7 +6,7 @@ services:
     # build: .            # or build the image yourself instead of pulling it
     container_name: czu-stream-recorder
     restart: unless-stopped
-    # Owner of the recordings on the host (Synology: the DSM user's uid, group "users" = 100). Set them in .env.
+    # Run as a dedicated unprivileged user that can write only the mounted folders (see README). Set in .env.
     user: "${PUID:-1000}:${PGID:-100}"
     environment:
       TZ: ${TZ:-Europe/Prague}
@@ -15,9 +15,6 @@ services:
       - ${RECORDINGS_DIR:-./recordings}:/recordings   # MP4 files (e.g. a Plex library)
       - ${NOTES_DIR:-./notes}:/notes                  # .log and .m4a per recording
       - ./work:/work                                  # segment parts while recording + state
-    logging:
-      driver: json-file
-      options: { max-size: "5m", max-file: "3" }
     healthcheck:
       # the schedule must parse; stream problems are logged by the daemon itself
       test: ["CMD", "python", "-m", "recorder", "list", "--config", "/config/schedule.toml"]

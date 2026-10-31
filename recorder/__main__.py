@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -58,9 +59,13 @@ def job(rec: schedule.Recording, d: Dirs, normalize: bool) -> None:
     """Record one schedule entry to the end of its window, then finalize. Safe to re-run:
     it resumes into the same parts folder after a restart."""
     work, parts, mp4, notes = paths(d, rec)
-    work.mkdir(parents=True, exist_ok=True)
     jlog = logging.getLogger(f"rec.{rec.id}")
-    fh = logging.FileHandler(work / "recording.log", encoding="utf-8")
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(work / "recording.log", encoding="utf-8")
+    except OSError as e:
+        log.error("%s: cannot create %s: %s", rec.title, work, e)
+        return
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S"))
     jlog.addHandler(fh)
     state = capture.StateFile(work / "state.json", capture.Stats(title=rec.title))
@@ -89,11 +94,26 @@ def job(rec: schedule.Recording, d: Dirs, normalize: bool) -> None:
         fh.close()
 
 
+def check_writable(d: Dirs) -> None:
+    """Log (don't exit) when a folder isn't writable, with the usual cause on a Synology."""
+    for p in dict.fromkeys((d.out, d.notes, d.work)):
+        probe = p / f".write-test-{os.getpid()}"
+        try:
+            probe.write_text("ok")
+            probe.unlink()
+        except OSError as e:
+            log.error("cannot write to %s (%s). Running as uid %d, groups %s. Give this user Read & Write "
+                      "on the folder (Synology: File Station → Properties → Permission).",
+                      p, e.strerror, os.getuid(), sorted(os.getgroups()))
+
+
 def cmd_run(args) -> None:
     d = Dirs(args.out, args.notes, args.work)
     for p in (d.out, d.notes, d.work):
         p.mkdir(parents=True, exist_ok=True)
     active: dict[str, threading.Thread] = {}
+    failing: set[str] = set()
+    check_writable(d)
     last_error = None
     last_listing = None
     log.info("scheduler started (config %s, video %s, notes %s, work %s, TZ now %s)", args.config, d.out, d.notes, d.work,
@@ -118,16 +138,24 @@ def cmd_run(args) -> None:
         for r in recs:
             if r.id in active and active[r.id].is_alive():
                 continue
-            st = status_of(d, r)
-            in_window = r.window_start <= now < r.window_end
-            # unfinished after a restart past the window → just finalize what was recorded
-            leftover = now >= r.window_end and st in ("recording", "finalizing")
-            if (in_window and st not in ("done", "failed")) or leftover:
-                if shutil.disk_usage(d.work).free < 20 * 1024 ** 3:
-                    log.warning("less than 20 GB free on the output volume")
-                t = threading.Thread(target=job, args=(r, d, normalize), name=r.id, daemon=True)
-                active[r.id] = t
-                t.start()
+            # One bad entry (unreadable path, full disk, ...) must never stop the daemon:
+            # a crash-looping container records nothing and floods the host with alerts.
+            try:
+                st = status_of(d, r)
+                in_window = r.window_start <= now < r.window_end
+                # unfinished after a restart past the window → just finalize what was recorded
+                leftover = now >= r.window_end and st in ("recording", "finalizing")
+                if (in_window and st not in ("done", "failed")) or leftover:
+                    if shutil.disk_usage(d.work).free < 20 * 1024 ** 3:
+                        log.warning("less than 20 GB free on the work volume")
+                    t = threading.Thread(target=job, args=(r, d, normalize), name=r.id, daemon=True)
+                    active[r.id] = t
+                    t.start()
+                failing.discard(r.id)
+            except Exception as e:
+                if r.id not in failing:
+                    log.error("%s: %s", r.title, e)
+                    failing.add(r.id)
         time.sleep(20)
 
 
