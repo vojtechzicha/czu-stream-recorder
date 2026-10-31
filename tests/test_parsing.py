@@ -68,6 +68,8 @@ stream = "https://other.cz/p.m3u8"
 start = 2026-12-12T08:45:00
 end = 2026-12-12T09:45:00
 lead_minutes = 0
+video = "Plex/S01 Předmět/s01e02.Cvičení"
+notes = "Předmět/2026-12-12 Cvičení"
 """
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "s.toml"
@@ -81,6 +83,17 @@ lead_minutes = 0
         self.assertEqual(a.id, "20261121-0845-seminar")
         self.assertEqual(b.lead, timedelta(0))
         self.assertEqual(b.basename, "2026-12-12 Other-room- X")
+        self.assertEqual(a.video_path, "2026-11-21 Seminář")
+        self.assertEqual(b.video_path, "Plex/S01 Předmět/s01e02.Cvičení")
+        self.assertEqual(b.notes_path, "Předmět/2026-12-12 Cvičení")
+
+    def test_bad_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "s.toml"
+            p.write_text('[[recording]]\ntitle="x"\nstream="https://e.cz/p.m3u8"\nstart=2026-01-01T10:00:00\n'
+                         'end=2026-01-01T11:00:00\nvideo="../../etc/x"\n', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                schedule.load(p)
 
     def test_unknown_stream(self):
         with tempfile.TemporaryDirectory() as d:

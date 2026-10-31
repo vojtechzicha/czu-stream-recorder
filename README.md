@@ -24,7 +24,9 @@ This recorder downloads segment by segment instead, so it can recover from these
 
 At the end, ffmpeg joins the parts into `YYYY-MM-DD <title>.mp4`. The video is copied without re-encoding. The audio
 is levelled with `dynaudnorm`, because room microphones are often quiet (the Kongresový sál feed is about −37 dB).
-The recorder also writes `…m4a` (audio only, for listening or transcription) and `…log`.
+The recorder also writes `…m4a` (audio only, for listening or transcription) and `…log`, either next to the MP4 or
+in a separate notes folder. For example, the MP4 can go to a Plex library while the audio and log go to a folder
+synced to the cloud.
 
 Size: about **1.5 GB per hour** at 1080p. `max_height = 720` roughly halves it.
 
@@ -44,7 +46,8 @@ docker compose logs -f
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RECORDINGS_DIR` | `./recordings` | Where the MP4/M4A files go (e.g. `/volume1/Media/Lectures` on a Synology) |
+| `RECORDINGS_DIR` | `./recordings` | Where the MP4 files go (e.g. a Plex library such as `/volume1/Media/Courses`) |
+| `NOTES_DIR` | `./notes` | Where each recording's `.m4a` and `.log` go |
 | `PUID` / `PGID` | `1000` / `100` | Owner of the files (`id <user>` on the host; Synology DSM users start at 1026, group `users` = 100) |
 | `TZ` | `Europe/Prague` | Time zone used to read the schedule |
 
@@ -53,8 +56,9 @@ The image `ghcr.io/vojtechzicha/czu-stream-recorder` is built for `linux/amd64` 
 ### Synology DSM
 
 Install **Container Manager**. Put `compose.yaml`, `.env` and `config/schedule.toml` in
-`/volume1/docker/czu-stream-recorder`, then create a project from that folder in Container Manager (or run
-`sudo docker compose up -d` there over SSH). The target folder must exist and be writable by `PUID`.
+`/volume1/docker/czu-stream-recorder`, together with empty `work/` and `notes/` folders. Then create a project from
+that folder in Container Manager, or run `sudo docker compose up -d` there over SSH. Every mounted folder must be
+writable by `PUID`. Segment parts stay in `work/` while recording, so a Plex library never sees half-finished files.
 
 ## Schedule
 
@@ -72,6 +76,8 @@ title = "Přednáška"
 start = 2026-11-21T08:45:00
 end   = 2026-11-21T15:30:00
 # stream = "…"  max_height = 720  lead_minutes = 0  tail_minutes = 30
+# video = "ČZU/S01 Ekonomika pro manažery/s01e02.Cvičení"   # MP4 path under RECORDINGS_DIR, no extension
+# notes = "Ekonomika pro manažery/2026-11-21 Cvičení"       # .m4a/.log path under NOTES_DIR, no extension
 ```
 
 The file is re-read every 20 seconds, so you can add sessions without restarting. To record another room, open its page on
@@ -88,8 +94,9 @@ python -m recorder run    --config config/schedule.toml --out DIR    # the sched
 ```
 
 In the container: `docker exec czu-stream-recorder python -m recorder check --config /config/schedule.toml`.
-Each recording's progress is in `<out>/.work/<id>/state.json` and `recording.log`. Its parts are deleted once the
-MP4 is written; if joining fails, they are kept.
+Each recording's progress is in `work/<id>/state.json` and `recording.log`. Its parts are deleted once the
+MP4 is written; if joining fails, they are kept. Outside Docker, `--notes` and `--work` default to the `--out` folder
+and `<out>/.work`.
 
 Requirements without Docker: Python ≥ 3.11 (standard library only) and `ffmpeg`/`ffprobe` on the `PATH`.
 

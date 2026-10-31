@@ -1,9 +1,13 @@
 """czu-stream-recorder: record scheduled ČZU live streams (video.czu.cz/live/...).
 
-  python -m recorder run    --config schedule.toml --out DIR   # scheduler daemon (the container's command)
-  python -m recorder list   --config schedule.toml --out DIR   # schedule and status of each recording
-  python -m recorder check  --config schedule.toml             # validate the file and probe every stream once
+  python -m recorder run    --config schedule.toml --out DIR [--notes DIR] [--work DIR]   # scheduler daemon
+  python -m recorder list   --config schedule.toml --out DIR [--work DIR]   # schedule and status of each recording
+  python -m recorder check  --config schedule.toml                          # validate the file, probe every stream
   python -m recorder record --stream URL|NAME --minutes N --title T --out DIR [--config F]   # record now
+
+--out   MP4 files (e.g. a Plex library); a recording's `video` path is relative to it
+--notes the .log and .m4a (and later the transcript); a recording's `notes` path is relative to it (default: --out)
+--work  segment parts while recording, and state (default: <out>/.work)
 """
 from __future__ import annotations
 
@@ -26,28 +30,34 @@ def setup_logging() -> None:
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 
-def paths(out: Path, rec: schedule.Recording) -> tuple[Path, Path, Path]:
-    work = out / ".work" / rec.id
-    return work, work / "parts", out / f"{rec.basename}.mp4"
+class Dirs:
+    def __init__(self, out: str, notes: str | None = None, work: str | None = None):
+        self.out = Path(out)
+        self.notes = Path(notes) if notes else self.out
+        self.work = Path(work) if work else self.out / ".work"
 
 
-def status_of(out: Path, rec: schedule.Recording) -> str:
-    work, parts, mp4 = paths(out, rec)
-    if mp4.exists():
-        return "done"
+def paths(d: Dirs, rec: schedule.Recording) -> tuple[Path, Path, Path, Path]:
+    """work dir, parts dir, MP4, notes base (without extension)."""
+    work = d.work / rec.id
+    return work, work / "parts", d.out / f"{rec.video_path}.mp4", d.notes / rec.notes_path
+
+
+def status_of(d: Dirs, rec: schedule.Recording) -> str:
+    work, parts, mp4, _ = paths(d, rec)
     if (work / "state.json").exists():
         import json
         try:
             return json.loads((work / "state.json").read_text()).get("phase", "?")
         except ValueError:
             return "?"
-    return "scheduled"
+    return "done" if mp4.exists() else "scheduled"
 
 
-def job(rec: schedule.Recording, out: Path, normalize: bool) -> None:
+def job(rec: schedule.Recording, d: Dirs, normalize: bool) -> None:
     """Record one schedule entry to the end of its window, then finalize. Safe to re-run:
     it resumes into the same parts folder after a restart."""
-    work, parts, mp4 = paths(out, rec)
+    work, parts, mp4, notes = paths(d, rec)
     work.mkdir(parents=True, exist_ok=True)
     jlog = logging.getLogger(f"rec.{rec.id}")
     fh = logging.FileHandler(work / "recording.log", encoding="utf-8")
@@ -61,7 +71,7 @@ def job(rec: schedule.Recording, out: Path, normalize: bool) -> None:
             capture.capture(rec.stream_url, rec.max_height, rec.window_end, parts, state, jlog)
         st.phase = "finalizing"
         state.save()
-        capture.finalize(parts, mp4, normalize, jlog)
+        capture.finalize(parts, mp4, notes.with_name(notes.name + ".m4a"), normalize, jlog)
         dur = capture.probe_duration(mp4)
         expected = (rec.window_end - rec.window_start).total_seconds()
         st.phase, st.finished, st.output = "done", capture._now(), mp4.name
@@ -69,7 +79,7 @@ def job(rec: schedule.Recording, out: Path, normalize: bool) -> None:
         state.save()
         jlog.info("done: %s (%s)", mp4.name, st.message)
         capture.remove_parts(parts)
-        shutil.copy2(work / "recording.log", mp4.with_suffix(".log"))
+        shutil.copy2(work / "recording.log", notes.with_name(notes.name + ".log"))
     except Exception as e:
         st.phase, st.message, st.finished = "failed", str(e), capture._now()
         state.save()
@@ -80,12 +90,14 @@ def job(rec: schedule.Recording, out: Path, normalize: bool) -> None:
 
 
 def cmd_run(args) -> None:
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+    d = Dirs(args.out, args.notes, args.work)
+    for p in (d.out, d.notes, d.work):
+        p.mkdir(parents=True, exist_ok=True)
     active: dict[str, threading.Thread] = {}
     last_error = None
     last_listing = None
-    log.info("scheduler started (config %s, output %s, TZ now %s)", args.config, out, f"{datetime.now():%Y-%m-%d %H:%M}")
+    log.info("scheduler started (config %s, video %s, notes %s, work %s, TZ now %s)", args.config, d.out, d.notes, d.work,
+             f"{datetime.now():%Y-%m-%d %H:%M}")
     while True:
         try:
             cfg, recs = schedule.load(Path(args.config))
@@ -106,14 +118,14 @@ def cmd_run(args) -> None:
         for r in recs:
             if r.id in active and active[r.id].is_alive():
                 continue
-            st = status_of(out, r)
+            st = status_of(d, r)
             in_window = r.window_start <= now < r.window_end
             # unfinished after a restart past the window → just finalize what was recorded
             leftover = now >= r.window_end and st in ("recording", "finalizing")
             if (in_window and st not in ("done", "failed")) or leftover:
-                if shutil.disk_usage(out).free < 20 * 1024 ** 3:
+                if shutil.disk_usage(d.work).free < 20 * 1024 ** 3:
                     log.warning("less than 20 GB free on the output volume")
-                t = threading.Thread(target=job, args=(r, out, normalize), name=r.id, daemon=True)
+                t = threading.Thread(target=job, args=(r, d, normalize), name=r.id, daemon=True)
                 active[r.id] = t
                 t.start()
         time.sleep(20)
@@ -121,10 +133,10 @@ def cmd_run(args) -> None:
 
 def cmd_list(args) -> None:
     _, recs = schedule.load(Path(args.config))
-    out = Path(args.out) if args.out else None
+    d = Dirs(args.out, None, args.work) if args.out else None
     for r in sorted(recs, key=lambda r: r.start):
-        st = status_of(out, r) if out else "-"
-        print(f"{r.window_start:%a %Y-%m-%d %H:%M}–{r.window_end:%H:%M}  {st:<10} {r.title}")
+        st = status_of(d, r) if d else "-"
+        print(f"{r.window_start:%a %Y-%m-%d %H:%M}–{r.window_end:%H:%M}  {st:<10} {r.title}  →  {r.video_path}.mp4")
 
 
 def cmd_check(args) -> int:
@@ -153,7 +165,7 @@ def cmd_record(args) -> None:
     start = datetime.now()
     rec = schedule.Recording(args.title, url, start, start + timedelta(minutes=args.minutes),
                              args.max_height, timedelta(0), timedelta(0))
-    job(rec, Path(args.out), not args.no_normalize)
+    job(rec, Dirs(args.out, args.notes, args.work), not args.no_normalize)
 
 
 def main() -> int:
@@ -161,13 +173,14 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="recorder")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run"); r.add_argument("--config", required=True); r.add_argument("--out", required=True)
-    l = sub.add_parser("list"); l.add_argument("--config", required=True); l.add_argument("--out")
+    r.add_argument("--notes"); r.add_argument("--work")
+    l = sub.add_parser("list"); l.add_argument("--config", required=True); l.add_argument("--out"); l.add_argument("--work")
     c = sub.add_parser("check"); c.add_argument("--config", required=True)
     n = sub.add_parser("record")
     n.add_argument("--stream", required=True); n.add_argument("--minutes", type=float, required=True)
     n.add_argument("--title", default="Test"); n.add_argument("--out", required=True)
     n.add_argument("--config"); n.add_argument("--max-height", type=int)
-    n.add_argument("--no-normalize", action="store_true")
+    n.add_argument("--no-normalize", action="store_true"); n.add_argument("--notes"); n.add_argument("--work")
     a = p.parse_args()
     if a.cmd == "run":
         cmd_run(a)

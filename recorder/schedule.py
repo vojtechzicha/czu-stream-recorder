@@ -18,6 +18,8 @@ class Recording:
     max_height: int | None
     lead: timedelta
     tail: timedelta
+    video: str | None = None  # path of the MP4 under the recordings dir, without extension
+    notes: str | None = None  # path of the log/audio/transcript under the notes dir, without extension
 
     @property
     def window_start(self) -> datetime:
@@ -32,6 +34,14 @@ class Recording:
         return f"{self.start:%Y-%m-%d} {safe_name(self.title)}"
 
     @property
+    def video_path(self) -> str:
+        return self.video or self.basename
+
+    @property
+    def notes_path(self) -> str:
+        return self.notes or self.basename
+
+    @property
     def id(self) -> str:
         return f"{self.start:%Y%m%d-%H%M}-{slug(self.title)}"
 
@@ -44,6 +54,15 @@ def safe_name(s: str) -> str:
 def slug(s: str) -> str:
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-zA-Z0-9]+", "-", s).strip("-").lower() or "recording"
+
+
+def _rel(v, what: str) -> str | None:
+    if v is None:
+        return None
+    parts = [safe_name(x) for x in str(v).replace("\\", "/").split("/") if x.strip()]
+    if not parts or any(x in ("", ".", "..") for x in parts):
+        raise ValueError(f"invalid {what} path {v!r}")
+    return "/".join(parts)
 
 
 def _dt(v) -> datetime:
@@ -73,5 +92,7 @@ def load(path: Path) -> tuple[dict, list[Recording]]:
             max_height=r.get("max_height", defaults.get("max_height")),
             lead=timedelta(minutes=r.get("lead_minutes", defaults.get("lead_minutes", 10))),
             tail=timedelta(minutes=r.get("tail_minutes", defaults.get("tail_minutes", 20))),
+            video=_rel(r.get("video"), "video"),
+            notes=_rel(r.get("notes"), "notes"),
         ))
     return data, recs

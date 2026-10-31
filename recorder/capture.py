@@ -148,15 +148,16 @@ def ffmpeg(args: list[str], log: logging.Logger) -> None:
         raise RuntimeError(f"ffmpeg exited {res.returncode}")
 
 
-def finalize(parts: Path, out_mp4: Path, normalize_audio: bool, log: logging.Logger) -> None:
+def finalize(parts: Path, out_mp4: Path, m4a: Path, normalize_audio: bool, log: logging.Logger) -> None:
     """Join the parts into one MP4 (video copied, audio optionally loudness-levelled),
-    plus an audio-only .m4a next to it for listening or transcription."""
+    plus an audio-only .m4a for listening or transcription."""
     files = sorted(parts.glob("*.ts"))
     if not files:
         raise RuntimeError("no segments were recorded")
     lst = parts.parent / "concat.txt"
     lst.write_text("".join("file '{}'\n".format(str(f).replace("'", r"'\''")) for f in files))
     tmp = out_mp4.with_name(out_mp4.stem + ".partial.mp4")
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
     audio = (["-af", "dynaudnorm=f=500:g=31:p=0.9:m=20", "-c:a", "aac", "-b:a", "128k"]
              if normalize_audio else ["-c:a", "copy", "-bsf:a", "aac_adtstoasc"])
     t0 = time.monotonic()
@@ -164,7 +165,7 @@ def finalize(parts: Path, out_mp4: Path, normalize_audio: bool, log: logging.Log
     ffmpeg(["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v:0", "-map", "0:a:0",
             "-c:v", "copy", *audio, "-movflags", "+faststart", str(tmp)], log)
     tmp.replace(out_mp4)
-    m4a = out_mp4.with_suffix(".m4a")
+    m4a.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg(["-i", str(out_mp4), "-map", "0:a:0", "-c", "copy", "-movflags", "+faststart",
             str(m4a.with_name(m4a.stem + ".partial.m4a"))], log)
     m4a.with_name(m4a.stem + ".partial.m4a").replace(m4a)

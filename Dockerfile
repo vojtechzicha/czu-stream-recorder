@@ -7,4 +7,4 @@ ENV TZ=Europe/Prague PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY recorder ./recorder
 # Runs as the UID/GID set in compose (`user:`), so the files are owned by the host user.
-CMD ["python", "-m", "recorder", "run", "--config", "/config/schedule.toml", "--out", "/recordings"]
+CMD ["python", "-m", "recorder", "run", "--config", "/config/schedule.toml", "--out", "/recordings", "--notes", "/notes", "--work", "/work"]
