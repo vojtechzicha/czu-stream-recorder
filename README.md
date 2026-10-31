@@ -107,7 +107,37 @@ Each recording's progress is in `work/<id>/state.json` and `recording.log`. Its 
 MP4 is written; if joining fails, they are kept. Outside Docker, `--notes` and `--work` default to the `--out` folder
 and `<out>/.work`.
 
-Requirements without Docker: Python ≥ 3.11 (standard library only) and `ffmpeg`/`ffprobe` on the `PATH`.
+Requirements without Docker: Python ≥ 3.11 (standard library only) and `ffmpeg`/`ffprobe` on the `PATH`. The
+transcriber needs [uv](https://docs.astral.sh/uv/), which installs its dependencies on first run.
+
+## Transcripts (optional, Apple Silicon Mac)
+
+`transcribe/czu_transcribe.py` turns each recording's `.m4a` into a Czech transcript with
+[MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) (`whisper-large-v3-turbo`). It runs
+locally on the Mac's GPU, so there's no API key and nothing to pay. The transcript is written next to the audio as
+`<name>.txt` in the style of the Plaud CLI:
+
+```
+[00:12:31 - 00:13:02] Co se týká objektivizované hodnoty, tak tu byste v literatuře našli i pod pojmem nesporný základ…
+```
+
+- Silence and breaks are removed with Silero VAD before Whisper sees the audio. Whisper invents text on
+  silence otherwise (the classic "Titulky vytvořil…"), and a few known phantom phrases are filtered as well.
+- The subject is taken from the parent folder name and used as the prompt, which helps with terminology.
+- Work is checkpointed every ~30 minutes of audio, so a Mac that goes to sleep just resumes on the next run.
+  On an M2 Pro, transcription runs at about 10× real time (a 7-hour day takes about 40 minutes).
+- Speakers are not separated.
+
+Point `NOTES_DIR` at a folder the Mac sees (for example one synced to OneDrive via Cloud Sync), then install the agent:
+
+```sh
+transcribe/install-mac.sh "$HOME/Library/CloudStorage/OneDrive-Personal/…/Video"
+```
+
+It runs every 15 minutes and at login, picks up every `.m4a` that has the recorder's `.log` next to it (the log is
+written last) and no `.txt` yet, keeps the Mac awake while it works, and posts a notification when a transcript is
+ready. The log is in `~/Library/Logs/czu-transcribe.log`. Run `install-mac.sh --uninstall` to remove it. For a single
+file: `uv run transcribe/czu_transcribe.py file recording.m4a`.
 
 ## Development
 
