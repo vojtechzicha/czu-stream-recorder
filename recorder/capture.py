@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import hls
+from . import hls, silence
 
 
 @dataclass
@@ -28,6 +28,7 @@ class Stats:
     finished: str = ""
     output: str = ""
     message: str = ""
+    stopped: str = ""  # why recording ended before the hard cap (silence), if it did
 
 
 class StateFile:
@@ -52,16 +53,24 @@ def _now() -> str:
 
 
 def capture(master_url: str, max_height: int | None, until: datetime, parts: Path,
-            state: StateFile, log: logging.Logger) -> None:
-    """Poll the media playlist and save every new segment until `until`.
+            state: StateFile, log: logging.Logger, stop: silence.SilenceStop | None = None) -> None:
+    """Poll the media playlist and save every new segment until `until` (the hard cap), or, with
+    `stop`, until the room has been quiet for a while after the scheduled end.
 
     Segment files are named <download time>-<media sequence>.ts, so sorting by name gives
     the recording order even if the server restarts and the sequence numbers start over.
     """
     st = state.stats
     parts.mkdir(parents=True, exist_ok=True)
-    seen = {int(p.stem.rsplit("-", 1)[1]) for p in parts.glob("*.ts")}
+    existing = sorted(parts.glob("*.ts"))
+    seen = {int(p.stem.rsplit("-", 1)[1]) for p in existing}
     last_seq: int | None = max(seen) if seen else None
+    levels = silence.load_levels(parts)
+    recent: list[tuple[datetime, float | None]] = [
+        (silence.part_time(p.name) or datetime.now(), levels.get(p.name)) for p in existing[-120:]]
+    last_arrival: datetime | None = recent[-1][0] if recent else None
+    seg_seconds = 10.0
+    level_failures = 0
     media_url: str | None = None
     failures = 0
     last_save = 0.0
@@ -70,6 +79,12 @@ def capture(master_url: str, max_height: int | None, until: datetime, parts: Pat
     state.save()
 
     while datetime.now() < until:
+        if stop:
+            reason = silence.should_stop(datetime.now(), stop, recent, last_arrival, seg_seconds)
+            if reason:
+                st.stopped = reason
+                log.info("stopping: %s", reason)
+                break
         try:
             if media_url is None:
                 media_url, v = hls.resolve_media_url(master_url, max_height)
@@ -119,6 +134,17 @@ def capture(master_url: str, max_height: int | None, until: datetime, parts: Pat
             tmp = name.with_suffix(".part")
             tmp.write_bytes(data)
             tmp.replace(name)
+            now = datetime.now()
+            peak = silence.segment_peak_db(data)
+            if peak is None:
+                level_failures += 1
+                if level_failures in (1, 10):
+                    log.warning("could not measure the audio level of %s (%d so far)", name.name, level_failures)
+            silence.record_level(parts, name.name, peak, now)
+            recent.append((now, peak))
+            del recent[:-120]
+            last_arrival = now
+            seg_seconds = seg.duration or seg_seconds
             seen.add(seg.seq)
             last_seq = seg.seq
             st.segments += 1
@@ -148,12 +174,20 @@ def ffmpeg(args: list[str], log: logging.Logger) -> None:
         raise RuntimeError(f"ffmpeg exited {res.returncode}")
 
 
-def finalize(parts: Path, out_mp4: Path, m4a: Path, normalize_audio: bool, log: logging.Logger) -> None:
+def finalize(parts: Path, out_mp4: Path, m4a: Path, normalize_audio: bool, log: logging.Logger,
+             trim_after: datetime | None = None, threshold_db: float = -45.0) -> None:
     """Join the parts into one MP4 (video copied, audio optionally loudness-levelled),
-    plus an audio-only .m4a for listening or transcription."""
+    plus an audio-only .m4a for listening or transcription. With `trim_after` (the scheduled end), the
+    quiet parts recorded after it, beyond ~30 s past the last sound, are left out."""
     files = sorted(parts.glob("*.ts"))
     if not files:
         raise RuntimeError("no segments were recorded")
+    if trim_after is not None:
+        keep = set(silence.trim_tail([f.name for f in files], silence.load_levels(parts), trim_after, threshold_db))
+        dropped = len(files) - len(keep)
+        if dropped:
+            log.info("trimming %d quiet part(s) (~%d s) at the end", dropped, dropped * 10)
+        files = [f for f in files if f.name in keep]
     lst = parts.parent / "concat.txt"
     lst.write_text("".join("file '{}'\n".format(str(f).replace("'", r"'\''")) for f in files))
     tmp = out_mp4.with_name(out_mp4.stem + ".partial.mp4")

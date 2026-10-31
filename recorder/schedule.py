@@ -20,6 +20,12 @@ class Recording:
     tail: timedelta
     video: str | None = None  # path of the MP4 under the recordings dir, without extension
     notes: str | None = None  # path of the log/audio/transcript under the notes dir, without extension
+    # End on silence: after end + min_tail, stop once `silence` passed without sound above silence_db.
+    # `tail` (end + tail = window_end) is then the hard cap.
+    stop_on_silence: bool = False
+    min_tail: timedelta = timedelta(minutes=5)
+    silence: timedelta = timedelta(minutes=5)
+    silence_db: float = -45.0
 
     @property
     def window_start(self) -> datetime:
@@ -82,6 +88,9 @@ def load(path: Path) -> tuple[dict, list[Recording]]:
         if not url or not str(url).startswith("http"):
             raise ValueError(f"recording #{i + 1} ({r.get('title')}): unknown stream {stream!r}")
         start, end = _dt(r["start"]), _dt(r["end"])
+
+        def opt(key, default, r=r):
+            return r.get(key, defaults.get(key, default))
         if end <= start:
             raise ValueError(f"recording #{i + 1} ({r.get('title')}): end before start")
         recs.append(Recording(
@@ -94,5 +103,9 @@ def load(path: Path) -> tuple[dict, list[Recording]]:
             tail=timedelta(minutes=r.get("tail_minutes", defaults.get("tail_minutes", 20))),
             video=_rel(r.get("video"), "video"),
             notes=_rel(r.get("notes"), "notes"),
+            stop_on_silence=bool(opt("stop_on_silence", False)),
+            min_tail=timedelta(minutes=opt("min_tail_minutes", 5)),
+            silence=timedelta(minutes=opt("silence_minutes", 5)),
+            silence_db=float(opt("silence_threshold_db", -45.0)),
         ))
     return data, recs

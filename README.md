@@ -28,6 +28,15 @@ The recorder also writes `…m4a` (audio only, for listening or transcription) a
 in a separate notes folder. For example, the MP4 can go to a Plex library while the audio and log go to a folder
 synced to the cloud.
 
+**Ending on silence.** Lectures overrun by unpredictable amounts, so with `stop_on_silence = true` the
+scheduled end is only the earliest stop. After `end + min_tail_minutes` the recorder stops once
+`silence_minutes` pass in which no 10-second segment peaks above `silence_threshold_db`, or no new segment
+arrives. `end + tail_minutes` is the hard cap. When the parts are joined, quiet parts recorded after the
+scheduled end are trimmed, keeping 30 s after the last sound. Silence before the scheduled end (a break, an
+exercise) never stops or trims anything. Every segment's peak level is kept in `levels.jsonl`, which lets the
+decision survive a restart. On the Kongresový sál feed, speech peaks around −10 to −17 dB and the empty hall
+around −62 dB, so −45 dB sits safely in between.
+
 Size: about **1.5 GB per hour** at 1080p. `max_height = 720` roughly halves it.
 
 ## Quick start (Docker)

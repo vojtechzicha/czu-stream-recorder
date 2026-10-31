@@ -6,7 +6,14 @@
 [defaults]
 stream = "kongresovy-sal"
 lead_minutes = 10       # start before the scheduled time
-tail_minutes = 20       # sessions overrun
+# End on silence: after end + min_tail_minutes, stop once silence_minutes pass with no 10-s segment
+# peaking above silence_threshold_db (speech peaks ~ -10 to -17 dB, the empty Kongresový sál ~ -62 dB).
+# Silence before the scheduled end never stops or trims anything. tail_minutes is then the hard cap.
+stop_on_silence = true
+min_tail_minutes = 5
+silence_minutes = 5
+silence_threshold_db = -45
+tail_minutes = 90       # hard cap after the scheduled end
 # max_height = 720      # cap the quality; default is the best variant (1080p ≈ 1.5 GB/h)
 normalize_audio = true  # level the (often quiet) room audio in the MP4 and the M4A
 

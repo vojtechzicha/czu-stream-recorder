@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import capture, hls, schedule
+from . import capture, hls, schedule, silence
 
 log = logging.getLogger("recorder")
 
@@ -73,14 +73,18 @@ def job(rec: schedule.Recording, d: Dirs, normalize: bool) -> None:
     try:
         if datetime.now() < rec.window_end:
             jlog.info("recording %r %s → %s", rec.title, f"{rec.window_start:%H:%M}", f"{rec.window_end:%H:%M}")
-            capture.capture(rec.stream_url, rec.max_height, rec.window_end, parts, state, jlog)
+            stop = (silence.SilenceStop(rec.end + rec.min_tail, rec.silence, rec.silence_db)
+                    if rec.stop_on_silence else None)
+            capture.capture(rec.stream_url, rec.max_height, rec.window_end, parts, state, jlog, stop)
         st.phase = "finalizing"
         state.save()
-        capture.finalize(parts, mp4, notes.with_name(notes.name + ".m4a"), normalize, jlog)
+        capture.finalize(parts, mp4, notes.with_name(notes.name + ".m4a"), normalize, jlog,
+                         trim_after=rec.end if rec.stop_on_silence else None, threshold_db=rec.silence_db)
         dur = capture.probe_duration(mp4)
         expected = (rec.window_end - rec.window_start).total_seconds()
         st.phase, st.finished, st.output = "done", capture._now(), mp4.name
-        st.message = f"{dur / 3600:.2f} h of {expected / 3600:.2f} h window, missed ~{st.missed_seconds:.0f} s"
+        st.message = (f"{dur / 3600:.2f} h of {expected / 3600:.2f} h window, missed ~{st.missed_seconds:.0f} s"
+                      + (f"; stopped early: {st.stopped}" if st.stopped else ""))
         state.save()
         jlog.info("done: %s (%s)", mp4.name, st.message)
         capture.remove_parts(parts)
@@ -191,8 +195,11 @@ def cmd_record(args) -> None:
         streams = cfg.get("streams", {})
     url = streams.get(args.stream, args.stream)
     start = datetime.now()
+    quiet = args.until_quiet is not None
     rec = schedule.Recording(args.title, url, start, start + timedelta(minutes=args.minutes),
-                             args.max_height, timedelta(0), timedelta(0))
+                             args.max_height, timedelta(0), timedelta(minutes=args.until_quiet or 0),
+                             stop_on_silence=quiet, min_tail=timedelta(minutes=args.min_tail),
+                             silence=timedelta(minutes=args.silence_minutes), silence_db=args.silence_db)
     job(rec, Dirs(args.out, args.notes, args.work), not args.no_normalize)
 
 
@@ -209,6 +216,10 @@ def main() -> int:
     n.add_argument("--title", default="Test"); n.add_argument("--out", required=True)
     n.add_argument("--config"); n.add_argument("--max-height", type=int)
     n.add_argument("--no-normalize", action="store_true"); n.add_argument("--notes"); n.add_argument("--work")
+    n.add_argument("--until-quiet", type=float, metavar="MAX_MIN",
+                   help="after --minutes, keep going until the room is quiet, at most MAX_MIN more minutes")
+    n.add_argument("--min-tail", type=float, default=5); n.add_argument("--silence-minutes", type=float, default=5)
+    n.add_argument("--silence-db", type=float, default=-45.0)
     a = p.parse_args()
     if a.cmd == "run":
         cmd_run(a)
