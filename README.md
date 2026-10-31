@@ -66,6 +66,13 @@ The image `ghcr.io/vojtechzicha/czu-stream-recorder` is built for `linux/amd64` 
 3. Install **Container Manager**. Put `compose.yaml`, `.env` and `config/schedule.toml` in
    `/volume1/docker/czu-stream-recorder`, add an empty `work/` folder, and create a project from that folder.
 
+4. **If `NOTES_DIR` should reach the cloud through Cloud Sync,** don't mount the Cloud Sync folder directly.
+   Cloud Sync doesn't notice files written through a container's bind mount, so they would never upload. Set
+   `NOTES_DIR` to an outbox (e.g. `/volume1/docker/czu-stream-recorder/outbox`) and add a Task Scheduler job
+   (user-defined script, run as the same user, every 5 minutes) that delivers the files from the host:
+   `/bin/bash /volume1/docker/czu-stream-recorder/synology-outbox.sh <outbox> "<Cloud Sync folder>"`
+   (the script is [`contrib/synology-outbox.sh`](contrib/synology-outbox.sh)).
+
 At startup, the recorder logs an error (and keeps running) for any mounted folder it can't write. Segment parts
 stay in `work/` while recording, so a Plex library never sees half-finished files.
 
