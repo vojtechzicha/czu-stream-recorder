@@ -1,11 +1,15 @@
 # /// script
 # requires-python = ">=3.11,<3.13"
-# dependencies = ["mlx-whisper>=0.4.2", "faster-whisper>=1.1", "numpy"]
+# dependencies = ["mlx-whisper>=0.4.2; sys_platform == 'darwin'", "faster-whisper>=1.1; sys_platform == 'darwin'", "numpy"]
 # ///
-"""Transcribe the recorder's .m4a files on an Apple Silicon Mac (MLX Whisper, local, free).
+"""Transcribe the recorder's .m4a files locally and for free: MLX Whisper on an Apple Silicon Mac,
+whisper.cpp on Windows (installed by install-windows.ps1; manual runs only, no scheduler).
 
   uv run czu_transcribe.py scan  ROOT [--model M]   # every finished recording under ROOT without a transcript
   uv run czu_transcribe.py file  AUDIO [--model M] [--prompt TEXT] [--force]
+
+On Windows, M is a ggml model file name in %LOCALAPPDATA%\\Programs\\whisper.cpp\\models (or a path); Silero VAD and
+the hallucination filters run in whisper.cpp itself (whisper-vad-speech-segments for the block cut points).
 
 A recording is "finished" when the recorder has written its .log next to the .m4a. The transcript goes next to
 it as <name>.txt, one paragraph per ~30 s or pause, in the Plaud CLI style:
@@ -19,13 +23,14 @@ sleeping Mac only pauses it.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
+import wave
 from datetime import datetime
 from pathlib import Path
 
@@ -34,7 +39,33 @@ import numpy as np
 SR = 16000
 BLOCK = 30 * 60            # seconds per block
 BLOCK_SLACK = 90           # look this far past the block end for a pause to cut at
-DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo"
+WIN = sys.platform == "win32"
+DEFAULT_MODEL = "ggml-large-v3-turbo-q8_0.bin" if WIN else "mlx-community/whisper-large-v3-turbo"
+VAD_ARGS = ["-vsd", "700", "-vp", "250", "-vspd", "300"]   # the same Silero settings as speech_regions() on the Mac
+WCPP_THREADS = os.environ.get("WHISPER_CPP_THREADS", "8")   # 8 beat 12 on a Snapdragon X Elite
+
+
+def wcpp_dir() -> Path:
+    return Path(os.environ.get("WHISPER_CPP_DIR") or Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "whisper.cpp")
+
+
+def wcpp(name: str) -> str:
+    for sub in ("cpu/Release", "Release", "."):
+        p = wcpp_dir() / sub / name
+        if p.exists():
+            return str(p)
+    raise FileNotFoundError(f"{name} not found under {wcpp_dir()} (run transcribe/install-windows.ps1)")
+
+
+def wcpp_model(name: str) -> str:
+    p = Path(name)
+    return str(p if p.is_file() else wcpp_dir() / "models" / name)
+
+
+def write_wav(path: Path, audio: np.ndarray) -> None:
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
 HALLUCINATIONS = re.compile(
     r"titulky|johnyx|amara\.org|děkuji za (vaši )?pozornost\.?$|odebírejte|subscribe|www\.\S+\.(cz|com)",
     re.IGNORECASE)
@@ -59,6 +90,15 @@ def decode(path: Path, start: float, length: float) -> np.ndarray:
 
 
 def speech_regions(audio: np.ndarray) -> list[tuple[float, float]]:
+    if WIN:
+        with tempfile.TemporaryDirectory() as d:
+            wav = Path(d) / "block.wav"
+            write_wav(wav, audio)
+            out = subprocess.run([wcpp("whisper-vad-speech-segments.exe"), "-f", str(wav), "-np",
+                                  "-vm", wcpp_model("ggml-silero-v5.1.2.bin"), "-t", WCPP_THREADS, *VAD_ARGS],
+                                 capture_output=True, text=True, check=True).stdout
+        return [(float(a) / 100, float(b) / 100)   # centiseconds
+                for a, b in re.findall(r"start = ([\d.]+), end = ([\d.]+)", out)]
     from faster_whisper.vad import VadOptions, get_speech_timestamps
     ts = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=700, speech_pad_ms=250,
                                                  min_speech_duration_ms=300))
@@ -89,10 +129,30 @@ def cut_point(regions: list[tuple[float, float]], target: float, limit: float) -
     return limit
 
 
+def transcribe_clips_wcpp(audio: np.ndarray, model: str, prompt: str | None) -> list[dict]:
+    """whisper.cpp on the whole block with its own Silero VAD; timestamps come back on the block's timeline."""
+    with tempfile.TemporaryDirectory() as d:
+        wav = Path(d) / "block.wav"
+        write_wav(wav, audio)
+        cmd = [wcpp("whisper-cli.exe"), "-m", wcpp_model(model), "-f", str(wav), "-l", "cs", "-t", WCPP_THREADS,
+               "--vad", "-vm", wcpp_model("ggml-silero-v5.1.2.bin"), *VAD_ARGS,
+               "-mc", "0",                                   # = condition_on_previous_text=False
+               "-et", "2.4", "-lpt", "-1.0", "-nth", "0.6",  # the same thresholds as on the Mac
+               "-np", "-oj", "-of", str(Path(d) / "out")]
+        if prompt:
+            cmd += ["--prompt", prompt]
+        subprocess.run(cmd, capture_output=True, check=True)
+        res = json.loads((Path(d) / "out.json").read_text(encoding="utf-8"))
+    return [{"start": s["offsets"]["from"] / 1000, "end": s["offsets"]["to"] / 1000, "text": s["text"]}
+            for s in res.get("transcription", [])]
+
+
 def transcribe_clips(audio: np.ndarray, clips: list[tuple[float, float]], model: str, prompt: str | None) -> list[dict]:
-    import mlx_whisper
     if not clips:
         return []
+    if WIN:
+        return transcribe_clips_wcpp(audio, model, prompt)
+    import mlx_whisper
     flat = ",".join(f"{s:.2f},{e:.2f}" for s, e in clips)
     res = mlx_whisper.transcribe(audio, path_or_hf_repo=model, language="cs", task="transcribe",
                                  clip_timestamps=flat, condition_on_previous_text=False, initial_prompt=prompt,
@@ -184,7 +244,8 @@ def transcribe_file(audio: Path, model: str, prompt: str | None, force: bool = F
     paras = paragraphs(drop_repeats(segs))
     head = [
         f"Přepis: {audio.parent.name} – {audio.stem}" if audio.parent.name else f"Přepis: {audio.stem}",
-        f"Zdroj: {audio.name} ({hms(total)}); Whisper {model.split('/')[-1]} (MLX, lokálně); "
+        f"Zdroj: {audio.name} ({hms(total)}); Whisper {Path(model).stem if WIN else model.split('/')[-1]} "
+        f"({'whisper.cpp' if WIN else 'MLX'}, lokálně); "
         f"přepsáno {datetime.now():%Y-%m-%d %H:%M}.",
         "Mluvčí nejsou rozlišeni. Ticho a přestávky jsou vynechány.",
         "",
@@ -234,12 +295,18 @@ def cmd_scan(args) -> int:
     if not root.is_dir():
         log(f"root not found: {root}")
         return 1
-    lock_path = Path.home() / "Library" / "Caches" / "czu-transcribe.lock"
+    lock_path = (Path(os.environ.get("LOCALAPPDATA", "")) / "czu-transcribe.lock" if WIN
+                 else Path.home() / "Library" / "Caches" / "czu-transcribe.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "w") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            if WIN:
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, PermissionError, OSError):
             log("another run is in progress")
             return 0
         todo = finished_recordings(root)

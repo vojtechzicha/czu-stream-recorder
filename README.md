@@ -127,7 +127,7 @@ and `<out>/.work`.
 Requirements without Docker: Python ≥ 3.11 (standard library only) and `ffmpeg`/`ffprobe` on the `PATH`. The
 transcriber needs [uv](https://docs.astral.sh/uv/), which installs its dependencies on first run.
 
-## Transcripts (optional, Apple Silicon Mac)
+## Transcripts (optional, Apple Silicon Mac; Windows by hand)
 
 `transcribe/czu_transcribe.py` turns each recording's `.m4a` into a Czech transcript with
 [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) (`whisper-large-v3-turbo`). It runs
@@ -155,6 +155,22 @@ It runs every 15 minutes and at login, picks up every `.m4a` that has the record
 written last) and no `.txt` yet, keeps the Mac awake while it works, and posts a notification when a transcript is
 ready. The log is in `~/Library/Logs/czu-transcribe.log`. Run `install-mac.sh --uninstall` to remove it. For a single
 file: `uv run transcribe/czu_transcribe.py file recording.m4a`.
+
+### Windows (manual fallback)
+
+The same script runs on Windows with [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (native build, CPU) in
+place of MLX. The output format is the same; only the header names the engine. There's no scheduler: run it by hand,
+for example when the Mac is unreachable.
+
+```powershell
+pwsh transcribe/install-windows.ps1     # whisper.cpp + large-v3-turbo q8_0 + Silero VAD into %LOCALAPPDATA%\Programs\whisper.cpp
+uv run transcribe/czu_transcribe.py file "…\Video\<Předmět>\2026-10-31 Přednáška.m4a"
+uv run transcribe/czu_transcribe.py scan "…\Video"
+```
+
+Silero VAD and the decoder thresholds are the same as on the Mac, applied inside whisper.cpp. On a Snapdragon X
+Elite it runs at about 5× real time (8 threads; set `WHISPER_CPP_THREADS` to change). The Adreno/OpenCL build crashed
+there, so the installer uses the CPU build.
 
 ## Development
 
