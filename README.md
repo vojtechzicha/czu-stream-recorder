@@ -83,6 +83,14 @@ The image `ghcr.io/vojtechzicha/czu-stream-recorder` is built for `linux/amd64` 
    (the script is [`contrib/synology-outbox.sh`](contrib/synology-outbox.sh)), and give the user **Traverse folders/Execute files** (this folder only)
    on each folder above the Cloud Sync folder: the script runs on the host, where it has to walk the full path.
 
+5. **Optional: e-mail on events.** [`contrib/recorder-watch.sh`](contrib/recorder-watch.sh) reads the schedule and
+   `work/` from the host and exits 1 when there is news, so a Task Scheduler job (same user, every 5 minutes,
+   "Send run details by email" + "only when the script terminates abnormally") mails you: PRE-FLIGHT (the hour
+   before a window, stream probed), STARTED, PROBLEM (no start, no new segment for 3 min, failed, audio stuck in the
+   outbox), WARNING (hall silent for 15 min during the session), RECOVERED and DONE. Each event is sent once.
+   `/bin/bash /volume1/docker/czu-stream-recorder/recorder-watch.sh "<Cloud Sync folder>/.recorder-status.txt"`
+   also keeps a one-line-per-recording progress file there while a window is near.
+
 At startup, the recorder logs an error (and keeps running) for any mounted folder it can't write. Segment parts
 stay in `work/` while recording, so a Plex library never sees half-finished files.
 
