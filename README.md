@@ -132,7 +132,9 @@ Each recording's progress is in `work/<id>/state.json` and `recording.log`. Its 
 MP4 is written; if joining fails, they are kept. Outside Docker, `--notes` and `--work` default to the `--out` folder
 and `<out>/.work`.
 
-Requirements without Docker: Python ≥ 3.11 (standard library only) and `ffmpeg`/`ffprobe` on the `PATH`. The
+Requirements without Docker: Python ≥ 3.11 (standard library only) and `ffmpeg`/`ffprobe` on the `PATH`. Jobs
+started by launchd or cron get a bare `PATH`, so the recorder also looks in `/opt/homebrew/bin` and `/usr/local/bin`;
+`run` logs an error at startup and `check` fails if it still can't find them. The
 transcriber needs [uv](https://docs.astral.sh/uv/), which installs its dependencies on first run.
 
 ## Transcripts (optional, Apple Silicon Mac; Windows by hand)

@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import hls, silence
+from . import hls, silence, tools
 
 
 @dataclass
@@ -165,7 +165,7 @@ def capture(master_url: str, max_height: int | None, until: datetime, parts: Pat
 
 
 def ffmpeg(args: list[str], log: logging.Logger) -> None:
-    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y", *args]
+    cmd = [tools.cmd("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error", "-y", *args]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.stderr.strip():
         tail = res.stderr.strip().splitlines()[-15:]
@@ -207,7 +207,7 @@ def finalize(parts: Path, out_mp4: Path, m4a: Path, normalize_audio: bool, log: 
 
 
 def probe_duration(path: Path) -> float:
-    res = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+    res = subprocess.run([tools.cmd("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                           str(path)], capture_output=True, text=True)
     try:
         return float(res.stdout.strip())

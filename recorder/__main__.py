@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import capture, hls, schedule, silence
+from . import capture, hls, schedule, silence, tools
 
 log = logging.getLogger("recorder")
 
@@ -111,6 +111,16 @@ def check_writable(d: Dirs) -> None:
                       p, e.strerror, os.getuid(), sorted(os.getgroups()))
 
 
+def check_tools() -> bool:
+    """Log (don't exit) when ffmpeg/ffprobe can't be found: levels then go unmeasured and joining fails."""
+    gone = tools.missing()
+    if gone:
+        log.error("%s not found on the PATH (%s) or in %s. Install ffmpeg, or set PATH in the job that "
+                  "starts the recorder (launchd and cron start it with a bare PATH).",
+                  " and ".join(gone), os.environ.get("PATH", ""), ", ".join(tools.FALLBACK_DIRS))
+    return not gone
+
+
 def cmd_run(args) -> None:
     d = Dirs(args.out, args.notes, args.work)
     for p in (d.out, d.notes, d.work):
@@ -118,6 +128,7 @@ def cmd_run(args) -> None:
     active: dict[str, threading.Thread] = {}
     failing: set[str] = set()
     check_writable(d)
+    check_tools()
     last_error = None
     last_listing = None
     log.info("scheduler started (config %s, video %s, notes %s, work %s, TZ now %s)", args.config, d.out, d.notes, d.work,
@@ -175,6 +186,11 @@ def cmd_check(args) -> int:
     cfg, recs = schedule.load(Path(args.config))
     print(f"{len(recs)} recording(s) parsed")
     bad = 0
+    for name in ("ffmpeg", "ffprobe"):
+        path = tools.find(name)
+        print(f"OK   {name}: {path}" if path else f"FAIL {name}: not found on the PATH or in "
+              + ", ".join(tools.FALLBACK_DIRS))
+        bad += path is None
     for name, url in cfg.get("streams", {}).items():
         try:
             media, v = hls.resolve_media_url(url, None)

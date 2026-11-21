@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import tools
+
 LEVELS = "levels.jsonl"
 
 
@@ -31,7 +33,7 @@ class SilenceStop:
 def segment_peak_db(data: bytes) -> float | None:
     """Peak level of the segment's audio in dBFS (None if it has no decodable audio)."""
     try:
-        res = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", "pipe:0", "-map", "0:a:0",
+        res = subprocess.run([tools.cmd("ffmpeg"), "-hide_banner", "-nostats", "-i", "pipe:0", "-map", "0:a:0",
                               "-af", "volumedetect", "-f", "null", "-"],
                              input=data, capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
